@@ -117,9 +117,8 @@ size_t lzw_decode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_l
     if (k >= 256) return 0; // Invalid first code
 
     uint8_t w = (uint8_t)k;
-    if (out_pos < dst_len) dst[out_pos++] = w; else return 0;
+    if (out_pos < dst_len) dst[out_pos++] = w; else { free(dict); free(stack); return 0; }
 
-    uint8_t stack[DICT_SIZE];
     int prev_k = k;
 
     while (in_pos + 2 <= src_len) {
