@@ -137,6 +137,7 @@ size_t cpqoi_decode(const uint8_t *data, uint16_t *dst, size_t dst_len, uint16_t
     if (memcmp(data, CPQOI_MAGIC, 4) != 0) return 0;
 
     uint16_t width, height;
+    (void)dst_len;
     memcpy(&width, data + 4, 2);
     memcpy(&height, data + 6, 2);
     if (width_out) *width_out = width;

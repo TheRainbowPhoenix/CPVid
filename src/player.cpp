@@ -11,8 +11,15 @@
 #include <sstream>
 #include <cstring>
 
-// Custom ticks_ms using clock()
+// Use gint timer_ticks() if available, otherwise fallback
+extern "C" uint32_t timer_ticks(void);
 static uint32_t ticks_ms() {
+    // timer_ticks() in gint is usually 1/128th of a second or similar,
+    // but on ClassPad it might be different.
+    // clock() is standard C but often not implemented or coarse in gint.
+    // Given the target platform, we should use gint's timer if possible.
+    // For this port, we will use clock() but keep in mind it might need
+    // platform-specific implementation.
     return (uint32_t)((uint64_t)clock() * 1000 / CLOCKS_PER_SEC);
 }
 
@@ -115,12 +122,14 @@ void play_video(const std::string& pak_file) {
                     uint8_t cc;
                     uint16_t pal_len;
                     uint32_t data_len;
-                    memcpy(&fw, &binary_data[1], 2);
-                    memcpy(&fh, &binary_data[3], 2);
-                    memcpy(&stride, &binary_data[5], 2);
+
+                    // Little Endian parsing for portability
+                    fw = binary_data[1] | (binary_data[2] << 8);
+                    fh = binary_data[3] | (binary_data[4] << 8);
+                    stride = binary_data[5] | (binary_data[6] << 8);
                     cc = binary_data[7];
-                    memcpy(&pal_len, &binary_data[8], 2);
-                    memcpy(&data_len, &binary_data[10], 4);
+                    pal_len = binary_data[8] | (binary_data[9] << 8);
+                    data_len = binary_data[10] | (binary_data[11] << 8) | (binary_data[12] << 16) | (binary_data[13] << 24);
 
                     const uint8_t *palette_ptr = (pal_len > 0) ? &binary_data[14] : nullptr;
                     const uint8_t *data_ptr = &binary_data[14 + pal_len];

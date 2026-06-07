@@ -6,15 +6,17 @@ GMPak::GMPak(const std::string& filename) : f(nullptr) {
     if (!f) return;
 
     uint8_t header[10];
+    uint32_t toc_off;
+    uint32_t count;
+    uint8_t count_bytes[4];
+
     if (fread(header, 1, 10, f) != 10) goto error;
     if (memcmp(header, "GMPK", 4) != 0) goto error;
     // Little-endian parsing
-    uint32_t toc_off = header[6] | (header[7] << 8) | (header[8] << 16) | (header[9] << 24);
+    toc_off = header[6] | (header[7] << 8) | (header[8] << 16) | (header[9] << 24);
 
     if (fseek(f, toc_off, SEEK_SET) != 0) goto error;
 
-    uint32_t count;
-    uint8_t count_bytes[4];
     if (fread(count_bytes, 1, 4, f) != 4) goto error;
     count = count_bytes[0] | (count_bytes[1] << 8) | (count_bytes[2] << 16) | (count_bytes[3] << 24);
 

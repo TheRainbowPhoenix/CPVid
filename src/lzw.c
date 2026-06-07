@@ -13,9 +13,7 @@ typedef struct {
 size_t lzw_encode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_len) {
     if (src_len == 0) return 0;
 
-    uint16_t *out = (uint16_t *)dst;
-    size_t out_count = 0;
-    size_t max_out = dst_len / 2;
+    size_t out_pos = 0;
 
     // Simplified hash table for dictionary
     // Key is (prefix << 8) | character
@@ -50,8 +48,10 @@ size_t lzw_encode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_l
         if (found_code != -1) {
             w = found_code;
         } else {
-            if (out_count < max_out) {
-                out[out_count++] = (uint16_t)w;
+            if (out_pos + 2 <= dst_len) {
+                // Little Endian output
+                dst[out_pos++] = w & 0xFF;
+                dst[out_pos++] = (w >> 8) & 0xFF;
             } else {
                 return 0; // Buffer too small
             }
@@ -68,20 +68,20 @@ size_t lzw_encode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_l
         }
     }
 
-    if (out_count < max_out) {
-        out[out_count++] = (uint16_t)w;
+    if (out_pos + 2 <= dst_len) {
+        dst[out_pos++] = w & 0xFF;
+        dst[out_pos++] = (w >> 8) & 0xFF;
     } else {
         return 0;
     }
 
-    return out_count * 2;
+    return out_pos;
 }
 
 size_t lzw_decode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_len) {
     if (src_len == 0) return 0;
 
-    const uint16_t *in = (const uint16_t *)src;
-    size_t in_count = src_len / 2;
+    size_t in_pos = 0;
     size_t out_pos = 0;
 
     dict_entry_t dict[DICT_SIZE];
@@ -91,16 +91,22 @@ size_t lzw_decode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_l
     }
 
     int next_code = 256;
-    int k = in[0];
+    if (in_pos + 2 > src_len) return 0;
+    int k = src[in_pos] | (src[in_pos + 1] << 8);
+    in_pos += 2;
+
     if (k >= 256) return 0; // Invalid first code
 
     uint8_t w = (uint8_t)k;
     if (out_pos < dst_len) dst[out_pos++] = w; else return 0;
 
     uint8_t stack[DICT_SIZE];
+    int prev_k = k;
 
-    for (size_t i = 1; i < in_count; i++) {
-        k = in[i];
+    while (in_pos + 2 <= src_len) {
+        k = src[in_pos] | (src[in_pos + 1] << 8);
+        in_pos += 2;
+
         int entry_code = k;
         int stack_ptr = 0;
 
@@ -109,7 +115,7 @@ size_t lzw_decode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_l
         } else if (k == next_code) {
             // Special case: k == next_code
             stack[stack_ptr++] = w;
-            entry_code = in[i-1];
+            entry_code = prev_k;
         } else {
             return 0; // Bad code
         }
@@ -131,11 +137,12 @@ size_t lzw_decode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_l
         }
 
         if (next_code < DICT_SIZE) {
-            dict[next_code].prefix = in[i-1];
+            dict[next_code].prefix = prev_k;
             dict[next_code].character = first;
             next_code++;
         }
         w = first;
+        prev_k = k;
     }
 
     return out_pos;
