@@ -23,16 +23,14 @@ GMPak::GMPak(const std::string& filename) : f(nullptr) {
     for (uint32_t i = 0; i < count; i++) {
         char name[17];
         memset(name, 0, 17);
-        uint8_t type;
-        uint32_t off, size;
         uint8_t entry_bytes[9];
 
         if (fread(name, 1, 16, f) != 16) break;
         if (fread(entry_bytes, 1, 9, f) != 9) break;
 
-        type = entry_bytes[0];
-        off = entry_bytes[1] | (entry_bytes[2] << 8) | (entry_bytes[3] << 16) | (entry_bytes[4] << 24);
-        size = entry_bytes[5] | (entry_bytes[6] << 8) | (entry_bytes[7] << 16) | (entry_bytes[8] << 24);
+        uint8_t type = entry_bytes[0];
+        uint32_t off = entry_bytes[1] | (entry_bytes[2] << 8) | (entry_bytes[3] << 16) | (entry_bytes[4] << 24);
+        uint32_t size = entry_bytes[5] | (entry_bytes[6] << 8) | (entry_bytes[7] << 16) | (entry_bytes[8] << 24);
 
         std::string name_str(name);
         toc[name_str] = {type, off, size};

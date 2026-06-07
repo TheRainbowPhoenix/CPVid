@@ -1,6 +1,7 @@
 #include "player.hpp"
+#include <string>
 
 extern "C" int main(void) {
-    play_video("VIDEO.gmpak");
+    play_video(std::string("VIDEO.gmpak"));
     return 0;
 }

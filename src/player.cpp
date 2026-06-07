@@ -11,15 +11,7 @@
 #include <sstream>
 #include <cstring>
 
-// Use gint timer_ticks() if available, otherwise fallback
-extern "C" uint32_t timer_ticks(void);
 static uint32_t ticks_ms() {
-    // timer_ticks() in gint is usually 1/128th of a second or similar,
-    // but on ClassPad it might be different.
-    // clock() is standard C but often not implemented or coarse in gint.
-    // Given the target platform, we should use gint's timer if possible.
-    // For this port, we will use clock() but keep in mind it might need
-    // platform-specific implementation.
     return (uint32_t)((uint64_t)clock() * 1000 / CLOCKS_PER_SEC);
 }
 
@@ -37,7 +29,7 @@ static void draw_tiled_gint_image(const image_t *img, int x0, int y0, int img_w,
             int sx = tx * tile_size;
             int tw = (sx + tile_size <= img_w) ? tile_size : img_w - sx;
 
-            dsubimage(dx, dy, img, sx, sy, tw, th, DIMAGE_NONE);
+            dsubimage(dx, dy, (image_t*)img, sx, sy, tw, th, DIMAGE_NONE);
         }
         // Update per row as in the Python version
         dupdate();
@@ -109,9 +101,11 @@ void play_video(const std::string& pak_file) {
         char frame_name[16];
         sprintf(frame_name, "FRM_%04d", frame_idx);
 
-        if (pak.toc.count(frame_name)) {
+        bool has_frame = pak.toc.count(frame_name);
+        uint8_t type = 0;
+        if (has_frame) {
             std::vector<uint8_t> binary_data = pak.get_entry(frame_name);
-            uint8_t type = pak.toc[frame_name].type;
+            type = pak.toc[frame_name].type;
 
             if (type == 1) {
                 cpqoi_decode_and_draw(binary_data.data(), offset_x, offset_y);
@@ -121,7 +115,6 @@ void play_video(const std::string& pak_file) {
                     uint16_t fw, fh, stride;
                     uint8_t cc;
                     uint16_t pal_len;
-                    uint32_t data_len;
 
                     // Little Endian parsing for portability
                     fw = binary_data[1] | (binary_data[2] << 8);
@@ -129,14 +122,13 @@ void play_video(const std::string& pak_file) {
                     stride = binary_data[5] | (binary_data[6] << 8);
                     cc = binary_data[7];
                     pal_len = binary_data[8] | (binary_data[9] << 8);
-                    data_len = binary_data[10] | (binary_data[11] << 8) | (binary_data[12] << 16) | (binary_data[13] << 24);
 
                     const uint8_t *palette_ptr = (pal_len > 0) ? &binary_data[14] : nullptr;
                     const uint8_t *data_ptr = &binary_data[14 + pal_len];
 
                     image_t img;
-                    img.format = prof; // Prof here should map to format
-                    img.flags = IMAGE_FLAGS_DATA_RO | IMAGE_FLAGS_PALETTE_RO;
+                    img.format = prof;
+                    img.flags = (uint8_t)(IMAGE_FLAGS_DATA_RO | IMAGE_FLAGS_PALETTE_RO);
                     img.color_count = cc;
                     img.width = fw;
                     img.height = fh;
@@ -162,7 +154,7 @@ void play_video(const std::string& pak_file) {
             }
         }
 
-        if (pak.toc.count(frame_name) && pak.toc[frame_name].type == 1 || show_icon_timer > 0) {
+        if ((has_frame && type == 1) || show_icon_timer > 0) {
             dupdate();
         }
 
