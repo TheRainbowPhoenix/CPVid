@@ -1,8 +1,13 @@
 #include "cpqoi.h"
 #include <gint/display.h>
 #include <string.h>
+#include <stdlib.h>
 
 #define CPQOI_MAGIC "CPQO"
+
+/* Use ILRAM/XYRAM if possible for the color index.
+   On ClassPad/SuperH, XYRAM is at 0xe500e000.
+   We'll use a local array which the compiler might put in registers or fast RAM. */
 
 static inline uint8_t cpqoi_hash(uint16_t c) {
     return (uint8_t)((c ^ (c >> 5) ^ (c >> 11)) % 64);
@@ -21,13 +26,18 @@ void cpqoi_decode_and_draw(const uint8_t *data, int offset_x, int offset_y) {
     size_t p = 8;
     int x = 0, y = 0;
 
+    // Optimized drawing using direct VRAM access if possible.
+    // gint_vram is the front buffer.
+    uint16_t *vram = gint_vram;
+
     while (y < height) {
         uint8_t b1 = data[p++];
 
         if (b1 < 0x40) {
             // INDEX
             prev_color = index[b1];
-            drect(offset_x + x, offset_y + y, offset_x + x, offset_y + y, prev_color);
+            if (offset_x + x < DWIDTH && offset_y + y < DHEIGHT)
+                vram[(offset_y + y) * DWIDTH + (offset_x + x)] = prev_color;
             x += 1;
         } else if (b1 < 0x80) {
             // SKIP
@@ -35,10 +45,16 @@ void cpqoi_decode_and_draw(const uint8_t *data, int offset_x, int offset_y) {
         } else if (b1 < 0xC0) {
             // RUN
             int run = (b1 & 0x3F) + 1;
-            // Draw horizontal run with line wrapping handling
             while (run > 0) {
                 int to_draw = (x + run > width) ? (width - x) : run;
-                drect(offset_x + x, offset_y + y, offset_x + x + to_draw - 1, offset_y + y, prev_color);
+                int start_x = offset_x + x;
+                int end_x = start_x + to_draw;
+                int cur_y = offset_y + y;
+                if (cur_y < DHEIGHT) {
+                    for (int i = start_x; i < end_x && i < DWIDTH; i++) {
+                        vram[cur_y * DWIDTH + i] = prev_color;
+                    }
+                }
                 x += to_draw;
                 run -= to_draw;
                 if (x >= width) {
@@ -46,14 +62,15 @@ void cpqoi_decode_and_draw(const uint8_t *data, int offset_x, int offset_y) {
                     x = 0;
                 }
             }
-            continue; // x, y updated inside loop
+            continue;
         } else if (b1 == 0xFF) {
             // RAW
             uint16_t color = data[p] | (data[p+1] << 8);
             p += 2;
             prev_color = color;
             index[cpqoi_hash(color)] = color;
-            drect(offset_x + x, offset_y + y, offset_x + x, offset_y + y, prev_color);
+            if (offset_x + x < DWIDTH && offset_y + y < DHEIGHT)
+                vram[(offset_y + y) * DWIDTH + (offset_x + x)] = prev_color;
             x += 1;
         } else if (b1 == 0xFE) {
             // LONG SKIP
@@ -65,7 +82,14 @@ void cpqoi_decode_and_draw(const uint8_t *data, int offset_x, int offset_y) {
             p += 2;
             while (run > 0) {
                 int to_draw = (x + run > width) ? (width - x) : run;
-                drect(offset_x + x, offset_y + y, offset_x + x + to_draw - 1, offset_y + y, prev_color);
+                int start_x = offset_x + x;
+                int end_x = start_x + to_draw;
+                int cur_y = offset_y + y;
+                if (cur_y < DHEIGHT) {
+                    for (int i = start_x; i < end_x && i < DWIDTH; i++) {
+                        vram[cur_y * DWIDTH + i] = prev_color;
+                    }
+                }
                 x += to_draw;
                 run -= to_draw;
                 if (x >= width) {

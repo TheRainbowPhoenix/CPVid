@@ -12,7 +12,6 @@ GMPak::GMPak(const char* filename) : entries(nullptr), entry_count(0), f(nullptr
     if (fread(header, 1, 10, f) != 10) goto error;
     if (memcmp(header, "GMPK", 4) != 0) goto error;
 
-    // Little Endian
     toc_off = header[6] | (header[7] << 8) | (header[8] << 16) | (header[9] << 24);
 
     if (fseek(f, toc_off, SEEK_SET) != 0) goto error;
@@ -34,6 +33,7 @@ GMPak::GMPak(const char* filename) : entries(nullptr), entry_count(0), f(nullptr
         entries[i].type = entry_bytes[0];
         entries[i].offset = entry_bytes[1] | (entry_bytes[2] << 8) | (entry_bytes[3] << 16) | (entry_bytes[4] << 24);
         entries[i].size = entry_bytes[5] | (entry_bytes[6] << 8) | (entry_bytes[7] << 16) | (entry_bytes[8] << 24);
+        entries[i].cached_data = nullptr;
     }
     return;
 
@@ -46,15 +46,33 @@ error:
 }
 
 GMPak::~GMPak() {
+    clear_cache();
     if (entries) free(entries);
     if (f) fclose(f);
 }
 
-void* GMPak::get_entry(const char* name, uint32_t* out_size, uint8_t* out_type) {
+void GMPak::clear_cache() {
+    if (!entries) return;
+    for (uint32_t i = 0; i < entry_count; i++) {
+        if (entries[i].cached_data) {
+            free(entries[i].cached_data);
+            entries[i].cached_data = nullptr;
+        }
+    }
+}
+
+void* GMPak::get_entry(const char* name, uint32_t* out_size, uint8_t* out_type, bool preload) {
     if (!f) return nullptr;
 
     for (uint32_t i = 0; i < entry_count; i++) {
         if (strcmp(entries[i].name, name) == 0) {
+            if (out_size) *out_size = entries[i].size;
+            if (out_type) *out_type = entries[i].type;
+
+            if (entries[i].cached_data) {
+                return entries[i].cached_data;
+            }
+
             void* data = malloc(entries[i].size);
             if (!data) return nullptr;
 
@@ -67,10 +85,35 @@ void* GMPak::get_entry(const char* name, uint32_t* out_size, uint8_t* out_type) 
                 return nullptr;
             }
 
-            if (out_size) *out_size = entries[i].size;
-            if (out_type) *out_type = entries[i].type;
+            if (preload) {
+                entries[i].cached_data = data;
+            }
             return data;
         }
     }
     return nullptr;
+}
+
+void GMPak::preload_entries(const char* prefix, int start, int end) {
+    char name[17];
+
+    // Very simple sliding window cache:
+    // clear entries that are far from the current range.
+    for (uint32_t i = 0; i < entry_count; i++) {
+        if (entries[i].cached_data) {
+            // Check if it matches prefix and is outside [start-5, end+5]
+            if (strncmp(entries[i].name, prefix, strlen(prefix)) == 0) {
+                int idx = atoi(entries[i].name + strlen(prefix));
+                if (idx < start - 5 || idx > end + 5) {
+                    free(entries[i].cached_data);
+                    entries[i].cached_data = nullptr;
+                }
+            }
+        }
+    }
+
+    for (int i = start; i <= end; i++) {
+        sprintf(name, "%s%04d", prefix, i);
+        get_entry(name, nullptr, nullptr, true);
+    }
 }

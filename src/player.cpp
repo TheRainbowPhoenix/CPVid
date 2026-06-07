@@ -1,11 +1,13 @@
 #include "player.hpp"
 #include "gmpak.hpp"
 #include "cpqoi.h"
+#include "perf.hpp"
 #include <gint/display.h>
 #include <gint/keyboard.h>
 #include <gint/timer.h>
 #include <gint/clock.h>
 #include <gint/rtc.h>
+#include <gint/gint.h>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -30,8 +32,9 @@ static void draw_tiled_gint_image(const image_t *img, int x0, int y0, int img_w,
 
             dsubimage(dx, dy, (image_t*)img, sx, sy, tw, th, DIMAGE_NONE);
         }
-        dupdate();
     }
+    // Update once per frame
+    dupdate();
 }
 
 static void draw_loading_logo() {
@@ -55,6 +58,7 @@ static void draw_loading_logo() {
 }
 
 void play_video(const char* pak_file) {
+    prof_init();
     draw_loading_logo();
 
     GMPak pak(pak_file);
@@ -63,6 +67,7 @@ void play_video(const char* pak_file) {
         dtext(10, 30, C_RED, "Failed to load VIDEO.");
         dupdate();
         sleep_ms(2000);
+        prof_quit();
         return;
     }
 
@@ -86,7 +91,21 @@ void play_video(const char* pak_file) {
             }
             free(meta_data);
         }
-        free(meta_ptr);
+        // If not cached, meta_ptr was malloced in get_entry.
+        // Currently get_entry always mallocs for non-cached or returns cached.
+        // Let's check if it's cached.
+        bool is_meta_cached = false;
+        for(uint32_t i=0; i<pak.entry_count; i++) if(pak.entries[i].cached_data == meta_ptr) is_meta_cached = true;
+        if(!is_meta_cached) free(meta_ptr);
+    }
+
+    if (total_frames <= 0) {
+        dclear(C_BLACK);
+        dtext(10, 30, C_RED, "No frames in VIDEO.");
+        dupdate();
+        sleep_ms(2000);
+        prof_quit();
+        return;
     }
 
     int frame_duration_ms = 1000 / fps;
@@ -98,24 +117,39 @@ void play_video(const char* pak_file) {
     dupdate();
 
     bool playing = true;
+    bool infoview = false;
     int frame_idx = 0;
     int show_icon_timer = 2;
+    int total_frames_played = 0;
 
     while (true) {
+        pc_last.frame_total = prof_make();
+        prof_enter(pc_last.frame_total);
+
         uint32_t start_t = ticks_ms();
         cleareventflips();
         clearevents();
+
+        if (playing) {
+            pak.preload_entries("FRM_", frame_idx + 1, frame_idx + 5);
+        }
 
         char frame_name[16];
         sprintf(frame_name, "FRM_%04d", frame_idx);
 
         uint32_t bin_size;
         uint8_t type;
+
+        pc_last.file_read = prof_make();
+        prof_enter(pc_last.file_read);
         void* bin_ptr = pak.get_entry(frame_name, &bin_size, &type);
+        prof_leave(pc_last.file_read);
 
         if (bin_ptr) {
             uint8_t* binary_data = (uint8_t*)bin_ptr;
 
+            pc_last.decode = prof_make();
+            prof_enter(pc_last.decode);
             if (type == 1) {
                 cpqoi_decode_and_draw(binary_data, offset_x, offset_y);
             } else if (type == 4) {
@@ -125,7 +159,6 @@ void play_video(const char* pak_file) {
                     uint8_t cc;
                     uint16_t pal_len;
 
-                    // Little Endian parsing
                     fw = binary_data[1] | (binary_data[2] << 8);
                     fh = binary_data[3] | (binary_data[4] << 8);
                     stride = binary_data[5] | (binary_data[6] << 8);
@@ -148,14 +181,17 @@ void play_video(const char* pak_file) {
                     draw_tiled_gint_image(&img, offset_x, offset_y, fw, fh, 32);
                 }
             }
-            free(bin_ptr);
+            prof_leave(pc_last.decode);
+
+            bool is_cached = false;
+            for(uint32_t i=0; i<pak.entry_count; i++) if(pak.entries[i].cached_data == bin_ptr) is_cached = true;
+            if(!is_cached) free(bin_ptr);
         }
 
         if (!playing || show_icon_timer > 0) {
             if (!playing) {
                 drect(285, 15, 293, 35, C_WHITE);
                 drect(299, 15, 307, 35, C_WHITE);
-                dupdate();
             } else {
                 int px[] = {285, 285, 307};
                 int py[] = {15, 35, 25};
@@ -164,14 +200,25 @@ void play_video(const char* pak_file) {
             }
         }
 
-        if ((bin_ptr && type == 1) || (!playing || show_icon_timer > 0)) {
+        pc_last.display_update = prof_make();
+        prof_enter(pc_last.display_update);
+        if (infoview) {
+            render_infoview(total_frames_played);
+        }
+
+        if ((bin_ptr && type == 1) || (!playing || show_icon_timer > 0 || infoview)) {
             dupdate();
         }
+        prof_leave(pc_last.display_update);
 
         if (keydown(KEY_DEL)) break;
         if (keydown(KEY_EXE)) {
             playing = !playing;
             if (playing) show_icon_timer = 4;
+        }
+        if (keydown(KEY_OPTN)) {
+            infoview = !infoview;
+            while(keydown(KEY_OPTN));
         }
 
         bool frame_advanced = false;
@@ -188,8 +235,12 @@ void play_video(const char* pak_file) {
 
         if (playing && !frame_advanced) {
             frame_idx++;
+            total_frames_played++;
             if (frame_idx >= total_frames) frame_idx = 0;
         }
+
+        prof_leave(pc_last.frame_total);
+        pc_last.fps = (prof_time(pc_last.frame_total) > 0) ? (1000000 / prof_time(pc_last.frame_total)) : 0;
 
         if (playing || frame_advanced) {
             uint32_t elapsed = ticks_ms() - start_t;
@@ -199,4 +250,5 @@ void play_video(const char* pak_file) {
             sleep_ms(50);
         }
     }
+    prof_quit();
 }
