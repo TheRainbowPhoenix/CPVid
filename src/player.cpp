@@ -5,14 +5,13 @@
 #include <gint/keyboard.h>
 #include <gint/timer.h>
 #include <gint/clock.h>
-#include <ctime>
-#include <vector>
-#include <string>
-#include <sstream>
+#include <gint/rtc.h>
+#include <cstdio>
 #include <cstring>
+#include <cstdlib>
 
 static uint32_t ticks_ms() {
-    return (uint32_t)((uint64_t)clock() * 1000 / CLOCKS_PER_SEC);
+    return (uint32_t)((uint64_t)rtc_ticks() * 1000 / 128);
 }
 
 static void draw_tiled_gint_image(const image_t *img, int x0, int y0, int img_w, int img_h, int tile_size = 32) {
@@ -31,7 +30,6 @@ static void draw_tiled_gint_image(const image_t *img, int x0, int y0, int img_w,
 
             dsubimage(dx, dy, (image_t*)img, sx, sy, tw, th, DIMAGE_NONE);
         }
-        // Update per row as in the Python version
         dupdate();
     }
 }
@@ -56,7 +54,7 @@ static void draw_loading_logo() {
     sleep_ms(1000);
 }
 
-void play_video(const std::string& pak_file) {
+void play_video(const char* pak_file) {
     draw_loading_logo();
 
     GMPak pak(pak_file);
@@ -68,17 +66,27 @@ void play_video(const std::string& pak_file) {
         return;
     }
 
-    std::vector<uint8_t> meta_bytes = pak.get_entry("META");
-    std::string meta_data((char*)meta_bytes.data(), meta_bytes.size());
+    uint32_t meta_size;
+    void* meta_ptr = pak.get_entry("META", &meta_size, nullptr);
     int fps = 15, total_frames = 0, w = 320, h = 320;
 
-    std::stringstream ss(meta_data);
-    std::string line;
-    while (std::getline(ss, line)) {
-        if (line.find("fps=") == 0) fps = std::stoi(line.substr(4));
-        if (line.find("frames=") == 0) total_frames = std::stoi(line.substr(7));
-        if (line.find("width=") == 0) w = std::stoi(line.substr(6));
-        if (line.find("height=") == 0) h = std::stoi(line.substr(7));
+    if (meta_ptr) {
+        char* meta_data = (char*)malloc(meta_size + 1);
+        if (meta_data) {
+            memcpy(meta_data, meta_ptr, meta_size);
+            meta_data[meta_size] = '\0';
+
+            char* line = strtok(meta_data, "\n");
+            while (line) {
+                if (strncmp(line, "fps=", 4) == 0) fps = atoi(line + 4);
+                else if (strncmp(line, "frames=", 7) == 0) total_frames = atoi(line + 7);
+                else if (strncmp(line, "width=", 6) == 0) w = atoi(line + 6);
+                else if (strncmp(line, "height=", 7) == 0) h = atoi(line + 7);
+                line = strtok(nullptr, "\n");
+            }
+            free(meta_data);
+        }
+        free(meta_ptr);
     }
 
     int frame_duration_ms = 1000 / fps;
@@ -101,22 +109,23 @@ void play_video(const std::string& pak_file) {
         char frame_name[16];
         sprintf(frame_name, "FRM_%04d", frame_idx);
 
-        bool has_frame = pak.toc.count(frame_name);
-        uint8_t type = 0;
-        if (has_frame) {
-            std::vector<uint8_t> binary_data = pak.get_entry(frame_name);
-            type = pak.toc[frame_name].type;
+        uint32_t bin_size;
+        uint8_t type;
+        void* bin_ptr = pak.get_entry(frame_name, &bin_size, &type);
+
+        if (bin_ptr) {
+            uint8_t* binary_data = (uint8_t*)bin_ptr;
 
             if (type == 1) {
-                cpqoi_decode_and_draw(binary_data.data(), offset_x, offset_y);
+                cpqoi_decode_and_draw(binary_data, offset_x, offset_y);
             } else if (type == 4) {
-                if (binary_data.size() >= 14) {
+                if (bin_size >= 14) {
                     uint8_t prof = binary_data[0];
                     uint16_t fw, fh, stride;
                     uint8_t cc;
                     uint16_t pal_len;
 
-                    // Little Endian parsing for portability
+                    // Little Endian parsing
                     fw = binary_data[1] | (binary_data[2] << 8);
                     fh = binary_data[3] | (binary_data[4] << 8);
                     stride = binary_data[5] | (binary_data[6] << 8);
@@ -139,6 +148,7 @@ void play_video(const std::string& pak_file) {
                     draw_tiled_gint_image(&img, offset_x, offset_y, fw, fh, 32);
                 }
             }
+            free(bin_ptr);
         }
 
         if (!playing || show_icon_timer > 0) {
@@ -154,7 +164,7 @@ void play_video(const std::string& pak_file) {
             }
         }
 
-        if ((has_frame && type == 1) || show_icon_timer > 0) {
+        if ((bin_ptr && type == 1) || (!playing || show_icon_timer > 0)) {
             dupdate();
         }
 

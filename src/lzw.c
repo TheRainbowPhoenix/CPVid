@@ -17,10 +17,18 @@ size_t lzw_encode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_l
 
     // Simplified hash table for dictionary
     // Key is (prefix << 8) | character
-    int16_t head[DICT_SIZE];
-    int16_t next[DICT_SIZE];
-    dict_entry_t dict[DICT_SIZE];
-    memset(head, -1, sizeof(head));
+    int16_t *head = (int16_t*)malloc(sizeof(int16_t) * DICT_SIZE);
+    int16_t *next = (int16_t*)malloc(sizeof(int16_t) * DICT_SIZE);
+    dict_entry_t *dict = (dict_entry_t*)malloc(sizeof(dict_entry_t) * DICT_SIZE);
+
+    if (!head || !next || !dict) {
+        if (head) free(head);
+        if (next) free(next);
+        if (dict) free(dict);
+        return 0;
+    }
+
+    memset(head, -1, sizeof(int16_t) * DICT_SIZE);
 
     for (int i = 0; i < 256; i++) {
         dict[i].prefix = -1;
@@ -72,9 +80,12 @@ size_t lzw_encode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_l
         dst[out_pos++] = w & 0xFF;
         dst[out_pos++] = (w >> 8) & 0xFF;
     } else {
-        return 0;
+        out_pos = 0;
     }
 
+    free(head);
+    free(next);
+    free(dict);
     return out_pos;
 }
 
@@ -84,7 +95,15 @@ size_t lzw_decode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_l
     size_t in_pos = 0;
     size_t out_pos = 0;
 
-    dict_entry_t dict[DICT_SIZE];
+    dict_entry_t *dict = (dict_entry_t*)malloc(sizeof(dict_entry_t) * DICT_SIZE);
+    uint8_t *stack = (uint8_t*)malloc(DICT_SIZE);
+
+    if (!dict || !stack) {
+        if (dict) free(dict);
+        if (stack) free(stack);
+        return 0;
+    }
+
     for (int i = 0; i < 256; i++) {
         dict[i].prefix = -1;
         dict[i].character = i;
@@ -117,6 +136,8 @@ size_t lzw_decode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_l
             stack[stack_ptr++] = w;
             entry_code = prev_k;
         } else {
+            free(dict);
+            free(stack);
             return 0; // Bad code
         }
 
@@ -132,6 +153,8 @@ size_t lzw_decode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_l
             if (out_pos < dst_len) {
                 dst[out_pos++] = stack[--stack_ptr];
             } else {
+                free(dict);
+                free(stack);
                 return 0;
             }
         }
@@ -145,5 +168,7 @@ size_t lzw_decode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_l
         prev_k = k;
     }
 
+    free(dict);
+    free(stack);
     return out_pos;
 }

@@ -1,13 +1,11 @@
 #ifndef GMPAK_HPP
 #define GMPAK_HPP
 
-#include <string>
-#include <vector>
-#include <map>
-#include <cstdio>
 #include <stdint.h>
+#include <cstdio>
 
 struct GMPakEntry {
+    char name[17];
     uint8_t type;
     uint32_t offset;
     uint32_t size;
@@ -15,13 +13,16 @@ struct GMPakEntry {
 
 class GMPak {
 public:
-    GMPak(const std::string& filename);
+    GMPak(const char* filename);
     ~GMPak();
 
     bool is_open() const { return f != nullptr; }
-    std::vector<uint8_t> get_entry(const std::string& name);
 
-    std::map<std::string, GMPakEntry> toc;
+    // Returns malloc'd buffer. Caller must free.
+    void* get_entry(const char* name, uint32_t* out_size, uint8_t* out_type);
+
+    GMPakEntry* entries;
+    uint32_t entry_count;
 
 private:
     FILE *f;
