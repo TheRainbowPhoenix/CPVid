@@ -16,6 +16,7 @@ set(SOURCES
   src/cpqoi.c
   src/gmpak.cpp
   src/player.cpp
+  src/perf.cpp
 )
 # Shared assets, fx-9860G-only assets and fx-CG-50-only assets
 set(ASSETS

@@ -61,6 +61,7 @@ size_t lzw_encode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_l
                 dst[out_pos++] = w & 0xFF;
                 dst[out_pos++] = (w >> 8) & 0xFF;
             } else {
+                free(head); free(next); free(dict);
                 return 0; // Buffer too small
             }
 

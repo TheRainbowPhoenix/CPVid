@@ -8,41 +8,23 @@
 extern "C" {
 #endif
 
-/**
- * @brief Decodes CPQOI data and draws it directly to the screen using gint's drect.
- *
- * @param data Compressed CPQOI data.
- * @param offset_x X offset on screen.
- * @param offset_y Y offset on screen.
- */
-void cpqoi_decode_and_draw(const uint8_t *data, int offset_x, int offset_y);
+// Decodes a CPQOI frame into a 16-bit buffer.
+// dst: pointer to the start of the buffer
+// stride: width of the buffer in pixels
+// off_x, off_y: offset within the buffer to start drawing
+void cpqoi_decode_to_buffer(const uint8_t *data, uint16_t *dst, int stride, int off_x, int off_y);
 
-/**
- * @brief Encodes raw RGB565 data into CPQOI format.
- *
- * @param src Input raw RGB565 pixel data.
- * @param width Image width.
- * @param height Image height.
- * @param dst Output buffer for CPQOI data.
- * @param dst_len Maximum size of output buffer.
- * @return size_t Actual size of CPQOI data, or 0 on failure.
- */
+// Original standalone decoder (legacy/convenience)
+// void cpqoi_decode_and_draw(const uint8_t *data, int x, int y); // Removed to encourage buffer usage
+
+// Encodes a 16-bit raw image into CPQOI.
 size_t cpqoi_encode(const uint16_t *src, uint16_t width, uint16_t height, uint8_t *dst, size_t dst_len);
 
-/**
- * @brief Decodes CPQOI data into a raw RGB565 buffer.
- *
- * @param data Compressed CPQOI data.
- * @param dst Output buffer for raw RGB565 pixels.
- * @param dst_len Maximum size of output buffer in bytes.
- * @param width Pointer to store image width.
- * @param height Pointer to store image height.
- * @return size_t Actual size of decompressed data in bytes, or 0 on failure.
- */
-size_t cpqoi_decode(const uint8_t *data, uint16_t *dst, size_t dst_len, uint16_t *width, uint16_t *height);
+// Decodes CPQOI into a raw 16-bit buffer.
+size_t cpqoi_decode(const uint8_t *data, uint16_t *dst, size_t dst_len, uint16_t *width_out, uint16_t *height_out);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* CPQOI_H */
+#endif
