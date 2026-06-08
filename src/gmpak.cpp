@@ -96,15 +96,26 @@ void* GMPak::get_entry(const char* name, uint32_t* out_size, uint8_t* out_type, 
 
 void GMPak::preload_entries(const char* prefix, int start, int end) {
     char name[17];
+    int total_frames = 0;
 
-    // Very simple sliding window cache:
-    // clear entries that are far from the current range.
+    // Find highest index for wrap-aware distance
+    for(uint32_t i=0; i<entry_count; i++) {
+        if(strncmp(entries[i].name, prefix, strlen(prefix)) == 0) {
+            int idx = atoi(entries[i].name + strlen(prefix));
+            if(idx > total_frames) total_frames = idx;
+        }
+    }
+    total_frames++; // count
+
     for (uint32_t i = 0; i < entry_count; i++) {
         if (entries[i].cached_data) {
-            // Check if it matches prefix and is outside [start-5, end+5]
             if (strncmp(entries[i].name, prefix, strlen(prefix)) == 0) {
                 int idx = atoi(entries[i].name + strlen(prefix));
-                if (idx < start - 5 || idx > end + 5) {
+                // Circular distance
+                int dist = abs(idx - start);
+                if (dist > total_frames / 2) dist = total_frames - dist;
+
+                if (dist > 15) { // Evict if distance > 15 frames
                     free(entries[i].cached_data);
                     entries[i].cached_data = nullptr;
                 }
@@ -113,7 +124,8 @@ void GMPak::preload_entries(const char* prefix, int start, int end) {
     }
 
     for (int i = start; i <= end; i++) {
-        sprintf(name, "%s%04d", prefix, i);
+        int idx = (i < 0) ? (i + total_frames) : (i % total_frames);
+        sprintf(name, "%s%04d", prefix, idx);
         get_entry(name, nullptr, nullptr, true);
     }
 }

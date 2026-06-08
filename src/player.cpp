@@ -32,9 +32,9 @@ static void draw_tiled_gint_image(const image_t *img, int x0, int y0, int img_w,
 
             dsubimage(dx, dy, (image_t*)img, sx, sy, tw, th, DIMAGE_NONE);
         }
+        // Restore row-by-row update to match Python's wipe effect
+        dupdate();
     }
-    // Update once per frame
-    dupdate();
 }
 
 static void draw_loading_logo() {
@@ -216,9 +216,9 @@ void play_video(const char* pak_file) {
             playing = !playing;
             if (playing) show_icon_timer = 4;
         }
-        if (keydown(KEY_OPTN)) {
+        if (keydown(KEY_KBD)) {
             infoview = !infoview;
-            while(keydown(KEY_OPTN));
+            while(keydown(KEY_KBD));
         }
 
         bool frame_advanced = false;
