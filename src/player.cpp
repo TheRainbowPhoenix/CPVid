@@ -18,14 +18,14 @@ static uint32_t ticks_ms() {
 
 // Draw a gint image to a buffer (usually VRAM)
 static void draw_gint_image_to_buffer(const image_t *img, uint16_t *dst, int stride, int x0, int y0) {
-    if (img->format == IMAGE_RGB565) {
+    if (img->format == IMAGE_RGB565 || img->format == IMAGE_RGB565A) {
         const uint16_t *src = (const uint16_t *)img->data;
         for (int y = 0; y < img->height; y++) {
             for (int x = 0; x < img->width; x++) {
                 dst[(y0 + y) * stride + (x0 + x)] = src[y * img->stride + x];
             }
         }
-    } else if (img->format == IMAGE_P8) {
+    } else if (img->format == IMAGE_P8_RGB565 || img->format == IMAGE_P8_RGB565A) {
         const uint8_t *src = (const uint8_t *)img->data;
         const uint16_t *pal = img->palette;
         for (int y = 0; y < img->height; y++) {
@@ -33,7 +33,7 @@ static void draw_gint_image_to_buffer(const image_t *img, uint16_t *dst, int str
                 dst[(y0 + y) * stride + (x0 + x)] = pal[src[y * img->stride + x]];
             }
         }
-    } else if (img->format == IMAGE_P4) {
+    } else if (img->format == IMAGE_P4_RGB565 || img->format == IMAGE_P4_RGB565A) {
         const uint8_t *src = (const uint8_t *)img->data;
         const uint16_t *pal = img->palette;
         for (int y = 0; y < img->height; y++) {
@@ -42,6 +42,17 @@ static void draw_gint_image_to_buffer(const image_t *img, uint16_t *dst, int str
                 uint8_t idx = (x & 1) ? (byte & 0x0f) : (byte >> 4);
                 dst[(y0 + y) * stride + (x0 + x)] = pal[idx];
             }
+        }
+    }
+}
+
+static void draw_mono_to_buffer(uint16_t *dst, int stride, int x0, int y0, uint16_t w, uint16_t h, const uint8_t *data) {
+    int bytes_per_line = (w + 7) / 8;
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            uint8_t byte = data[y * bytes_per_line + (x / 8)];
+            bool set = (byte & (0x80 >> (x % 8)));
+            dst[(y0 + y) * stride + (x0 + x)] = set ? C_BLACK : C_WHITE;
         }
     }
 }
@@ -114,7 +125,6 @@ void play_video(const char* pak_file) {
         return;
     }
 
-    // Allocate persistent video buffer to solve triple-buffering artifacts and alpha issues
     uint16_t *video_buffer = (uint16_t*)malloc(w * h * 2);
     if (!video_buffer) {
         dclear(C_BLACK);
@@ -149,7 +159,8 @@ void play_video(const char* pak_file) {
         clearevents();
 
         if (playing) {
-            pak.preload_entries("FRM_", frame_idx + 1, frame_idx + 5);
+            // Reduced preloading to save heap
+            pak.preload_entries("FRM_", frame_idx + 1, frame_idx + 2);
         }
 
         char frame_name[16];
@@ -169,22 +180,28 @@ void play_video(const char* pak_file) {
             pc_last.decode = prof_make();
             prof_enter(pc_last.decode);
             if (type == 1) {
-                // CPQOI: Decodes deltas into video_buffer
                 cpqoi_decode_to_buffer(binary_data, video_buffer, w, 0, 0);
             } else if (type == 4) {
-                // GINT Image: Decodes full frame into video_buffer
+                // Type 4: Native fxconv gint.image binaries
                 if (bin_size >= 14) {
                     image_t img;
                     img.format = binary_data[0];
                     img.width = binary_data[1] | (binary_data[2] << 8);
                     img.height = binary_data[3] | (binary_data[4] << 8);
                     img.stride = binary_data[5] | (binary_data[6] << 8);
-                    img.color_count = binary_data[7];
+                    img.color_count = (int8_t)binary_data[7];
                     uint16_t pal_len = binary_data[8] | (binary_data[9] << 8);
                     img.palette = (uint16_t*)&binary_data[14];
                     img.data = (void*)&binary_data[14 + pal_len];
 
                     draw_gint_image_to_buffer(&img, video_buffer, w, 0, 0);
+                }
+            } else if (type == 5) {
+                // Type 5: Monochrome fxconv payload
+                if (bin_size >= 9) {
+                    uint16_t fw = binary_data[1] | (binary_data[2] << 8);
+                    uint16_t fh = binary_data[3] | (binary_data[4] << 8);
+                    draw_mono_to_buffer(video_buffer, w, 0, 0, fw, fh, &binary_data[9]);
                 }
             }
             prof_leave(pc_last.decode);
@@ -197,11 +214,11 @@ void play_video(const char* pak_file) {
         pc_last.display_update = prof_make();
         prof_enter(pc_last.display_update);
 
-        // Push video_buffer to VRAM
         uint16_t *vram = gint_vram;
         for (int line = 0; line < h; line++) {
             memcpy(&vram[(offset_y + line) * DWIDTH + offset_x], &video_buffer[line * w], w * 2);
-            if (first_frame) dupdate(); // Wipe effect only for the first frame
+            // DO NOT dupdate() here! Only after full frame or for wipe effect
+            if (first_frame) dupdate();
         }
         first_frame = false;
 
@@ -233,6 +250,9 @@ void play_video(const char* pak_file) {
             infoview = !infoview;
             while(keydown(KEY_KBD));
         }
+        if (keydown(KEY_MENU)) {
+            gint_osmenu();
+        }
 
         bool frame_advanced = false;
         if (keydown(KEY_RIGHT) || keydown(KEY_6)) {
@@ -251,7 +271,6 @@ void play_video(const char* pak_file) {
             total_frames_played++;
             if (frame_idx >= total_frames) {
                 frame_idx = 0;
-                // On loop, we might want to clear or reset if the video isn't perfectly seamless
             }
         }
 

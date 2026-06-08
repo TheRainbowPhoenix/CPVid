@@ -31,7 +31,8 @@ void cpqoi_decode_to_buffer(const uint8_t *data, uint16_t *dst, int stride, int 
             x += 1;
         } else if (b1 < 0x80) {
             // SKIP
-            x += (b1 & 0x3F) + 1;
+            int skip = (b1 & 0x3F) + 1;
+            x += skip;
         } else if (b1 < 0xC0) {
             // RUN
             int run = (b1 & 0x3F) + 1;
@@ -57,8 +58,9 @@ void cpqoi_decode_to_buffer(const uint8_t *data, uint16_t *dst, int stride, int 
             x += 1;
         } else if (b1 == 0xFE) {
             // LONG SKIP
-            x += (data[p] | (data[p+1] << 8)) + 1;
+            int skip = (data[p] | (data[p+1] << 8)) + 1;
             p += 2;
+            x += skip;
         } else if (b1 == 0xFD) {
             // LONG RUN
             int run = (data[p] | (data[p+1] << 8)) + 1;
