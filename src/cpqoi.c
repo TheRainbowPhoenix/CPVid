@@ -6,7 +6,7 @@
 #define CPQOI_MAGIC "CPQO"
 
 static inline uint8_t cpqoi_hash(uint16_t c) {
-    return (uint8_t)((c ^ (c >> 5) ^ (c >> 11)) % 64);
+    return (uint8_t)((c ^ (c >> 5) ^ (c >> 11)) & 63);
 }
 
 void cpqoi_decode_to_buffer(const uint8_t *data, uint16_t *dst, int stride, int off_x, int off_y) {
@@ -45,6 +45,7 @@ void cpqoi_decode_to_buffer(const uint8_t *data, uint16_t *dst, int stride, int 
                 if (x >= width) {
                     y++;
                     x = 0;
+                    if (y >= height) break;
                 }
             }
             continue;
@@ -74,14 +75,15 @@ void cpqoi_decode_to_buffer(const uint8_t *data, uint16_t *dst, int stride, int 
                 if (x >= width) {
                     y++;
                     x = 0;
+                    if (y >= height) break;
                 }
             }
             continue;
         }
 
-        if (x >= width) {
-            y += x / width;
-            x = x % width;
+        while (x >= width) {
+            y++;
+            x -= width;
         }
     }
 }

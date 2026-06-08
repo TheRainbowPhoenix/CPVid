@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <algorithm>
 
 static uint32_t ticks_ms() {
     return (uint32_t)((uint64_t)rtc_ticks() * 1000 / 128);
@@ -62,7 +63,7 @@ static void draw_loading_logo() {
     uint16_t color_purple = C_RGB(18, 5, 25);
     uint16_t color_dark_purple = C_RGB(10, 2, 15);
 
-    int cx = 160, cy = 264;
+    int cx = DWIDTH / 2, cy = DHEIGHT / 2;
     dcircle(cx, cy, 50, C_WHITE, C_NONE);
     dcircle(cx, cy, 48, color_purple, C_NONE);
     dcircle(cx, cy + 4, 40, color_dark_purple, C_NONE);
@@ -72,7 +73,7 @@ static void draw_loading_logo() {
     int poly_y[] = {cy - 14, cy + 14, cy};
     dpoly(poly_x, poly_y, 3, color_purple, color_purple);
 
-    dtext(cx - 56, cy + 70, C_WHITE, "Loading VIDEO");
+    dtext_opt(cx, cy + 70, C_WHITE, C_NONE, DTEXT_CENTER, DTEXT_TOP, "Loading VIDEO", -1);
     dupdate();
     sleep_ms(500);
 }
@@ -144,11 +145,15 @@ void play_video(const char* pak_file) {
     dupdate();
 
     bool playing = true;
-    bool infoview = false;
     int frame_idx = 0;
     int show_icon_timer = 2;
     int total_frames_played = 0;
     bool first_frame = true;
+
+    // Key states for debouncing
+    bool exe_pressed = false;
+    bool right_pressed = false;
+    bool left_pressed = false;
 
     while (true) {
         pc_last.frame_total = prof_make();
@@ -159,7 +164,6 @@ void play_video(const char* pak_file) {
         clearevents();
 
         if (playing) {
-            // Reduced preloading to save heap
             pak.preload_entries("FRM_", frame_idx + 1, frame_idx + 2);
         }
 
@@ -182,7 +186,6 @@ void play_video(const char* pak_file) {
             if (type == 1) {
                 cpqoi_decode_to_buffer(binary_data, video_buffer, w, 0, 0);
             } else if (type == 4) {
-                // Type 4: Native fxconv gint.image binaries
                 if (bin_size >= 14) {
                     image_t img;
                     img.format = binary_data[0];
@@ -197,7 +200,6 @@ void play_video(const char* pak_file) {
                     draw_gint_image_to_buffer(&img, video_buffer, w, 0, 0);
                 }
             } else if (type == 5) {
-                // Type 5: Monochrome fxconv payload
                 if (bin_size >= 9) {
                     uint16_t fw = binary_data[1] | (binary_data[2] << 8);
                     uint16_t fh = binary_data[3] | (binary_data[4] << 8);
@@ -215,55 +217,71 @@ void play_video(const char* pak_file) {
         prof_enter(pc_last.display_update);
 
         uint16_t *vram = gint_vram;
-        for (int line = 0; line < h; line++) {
-            memcpy(&vram[(offset_y + line) * DWIDTH + offset_x], &video_buffer[line * w], w * 2);
-            // DO NOT dupdate() here! Only after full frame or for wipe effect
-            if (first_frame) dupdate();
+        int draw_h = std::min(h, DHEIGHT - offset_y);
+        int draw_w = std::min(w, DWIDTH - offset_x);
+        if (draw_h > 0 && draw_w > 0) {
+            for (int line = 0; line < draw_h; line++) {
+                memcpy(&vram[(offset_y + line) * DWIDTH + offset_x], &video_buffer[line * w], draw_w * 2);
+                if (first_frame && (line % 16 == 15)) dupdate();
+            }
         }
-        first_frame = false;
+        if (first_frame) {
+            dupdate();
+            first_frame = false;
+        }
 
         if (!playing || show_icon_timer > 0) {
+            int icon_x = DWIDTH - 40;
             if (!playing) {
-                drect(285, 15, 293, 35, C_WHITE);
-                drect(299, 15, 307, 35, C_WHITE);
+                drect(icon_x, 15, icon_x + 8, 35, C_WHITE);
+                drect(icon_x + 14, 15, icon_x + 22, 35, C_WHITE);
             } else {
-                int px[] = {285, 285, 307};
+                int px[] = {icon_x, icon_x, icon_x + 22};
                 int py[] = {15, 35, 25};
                 dpoly(px, py, 3, C_WHITE, C_WHITE);
                 show_icon_timer--;
             }
         }
 
-        if (infoview) {
-            render_infoview(total_frames_played);
-        }
-
         dupdate();
         prof_leave(pc_last.display_update);
 
         if (keydown(KEY_DEL)) break;
+
+        // Toggle playback with debouncing
         if (keydown(KEY_EXE)) {
-            playing = !playing;
-            if (playing) show_icon_timer = 4;
-        }
-        if (keydown(KEY_KBD)) {
-            infoview = !infoview;
-            while(keydown(KEY_KBD));
-        }
-        if (keydown(KEY_MENU)) {
-            gint_osmenu();
+            if (!exe_pressed) {
+                playing = !playing;
+                if (playing) show_icon_timer = 4;
+                exe_pressed = true;
+            }
+        } else {
+            exe_pressed = false;
         }
 
         bool frame_advanced = false;
+        // Seek right with debouncing
         if (keydown(KEY_RIGHT) || keydown(KEY_6)) {
-            frame_idx = (frame_idx + 1) % total_frames;
-            frame_advanced = true;
-            playing = false;
+            if (!right_pressed) {
+                frame_idx = (frame_idx + 1) % total_frames;
+                frame_advanced = true;
+                playing = false;
+                right_pressed = true;
+            }
+        } else {
+            right_pressed = false;
         }
+
+        // Seek left with debouncing
         if (keydown(KEY_LEFT) || keydown(KEY_4)) {
-            frame_idx = (frame_idx - 1 + total_frames) % total_frames;
-            frame_advanced = true;
-            playing = false;
+            if (!left_pressed) {
+                frame_idx = (frame_idx - 1 + total_frames) % total_frames;
+                frame_advanced = true;
+                playing = false;
+                left_pressed = true;
+            }
+        } else {
+            left_pressed = false;
         }
 
         if (playing && !frame_advanced) {

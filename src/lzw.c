@@ -2,173 +2,143 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define DICT_SIZE 4096
-#define MAX_CODE 4095
-
 typedef struct {
     int prefix;
     uint8_t character;
-} dict_entry_t;
+} lzw_node_t;
 
 size_t lzw_encode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_len) {
-    if (src_len == 0) return 0;
+    if (src_len == 0 || dst_len < 2) return 0;
 
-    size_t out_pos = 0;
-
-    // Simplified hash table for dictionary
-    // Key is (prefix << 8) | character
-    int16_t *head = (int16_t*)malloc(sizeof(int16_t) * DICT_SIZE);
-    int16_t *next = (int16_t*)malloc(sizeof(int16_t) * DICT_SIZE);
-    dict_entry_t *dict = (dict_entry_t*)malloc(sizeof(dict_entry_t) * DICT_SIZE);
-
-    if (!head || !next || !dict) {
-        if (head) free(head);
-        if (next) free(next);
-        if (dict) free(dict);
+    int *dict_prefix = (int*)malloc(65536 * sizeof(int));
+    uint8_t *dict_char = (uint8_t*)malloc(65536 * sizeof(uint8_t));
+    if (!dict_prefix || !dict_char) {
+        free(dict_prefix); free(dict_char);
         return 0;
     }
 
-    memset(head, -1, sizeof(int16_t) * DICT_SIZE);
-
     for (int i = 0; i < 256; i++) {
-        dict[i].prefix = -1;
-        dict[i].character = i;
-        head[i] = i;
-        next[i] = -1;
+        dict_prefix[i] = -1;
+        dict_char[i] = (uint8_t)i;
     }
-
     int next_code = 256;
-    int w = src[0];
+    int current_prefix = -1;
+    size_t p = 0;
 
-    for (size_t i = 1; i < src_len; i++) {
+    for (size_t i = 0; i < src_len; i++) {
         uint8_t c = src[i];
-
-        // Search for wc in dict
-        int found_code = -1;
-        int h = (w * 31 + c) % DICT_SIZE;
-        for (int code = head[h]; code != -1; code = next[code]) {
-            if (dict[code].prefix == w && dict[code].character == c) {
-                found_code = code;
-                break;
+        int found = -1;
+        if (current_prefix == -1) {
+            found = c;
+        } else {
+            for (int j = 256; j < next_code; j++) {
+                if (dict_prefix[j] == current_prefix && dict_char[j] == c) {
+                    found = j;
+                    break;
+                }
             }
         }
 
-        if (found_code != -1) {
-            w = found_code;
+        if (found != -1) {
+            current_prefix = found;
         } else {
-            if (out_pos + 2 <= dst_len) {
-                // Little Endian output
-                dst[out_pos++] = w & 0xFF;
-                dst[out_pos++] = (w >> 8) & 0xFF;
-            } else {
-                free(head); free(next); free(dict);
-                return 0; // Buffer too small
+            if (p + 2 > dst_len) {
+                free(dict_prefix); free(dict_char);
+                return 0;
             }
+            dst[p++] = (uint8_t)(current_prefix & 0xFF);
+            dst[p++] = (uint8_t)((current_prefix >> 8) & 0xFF);
 
-            if (next_code < DICT_SIZE) {
-                dict[next_code].prefix = w;
-                dict[next_code].character = c;
-                int h_new = (w * 31 + c) % DICT_SIZE;
-                next[next_code] = head[h_new];
-                head[h_new] = next_code;
+            if (next_code < 65536) {
+                dict_prefix[next_code] = current_prefix;
+                dict_char[next_code] = c;
                 next_code++;
             }
-            w = c;
+            current_prefix = c;
         }
     }
 
-    if (out_pos + 2 <= dst_len) {
-        dst[out_pos++] = w & 0xFF;
-        dst[out_pos++] = (w >> 8) & 0xFF;
-    } else {
-        out_pos = 0;
+    if (current_prefix != -1) {
+        if (p + 2 > dst_len) {
+            free(dict_prefix); free(dict_char);
+            return 0;
+        }
+        dst[p++] = (uint8_t)(current_prefix & 0xFF);
+        dst[p++] = (uint8_t)((current_prefix >> 8) & 0xFF);
     }
 
-    free(head);
-    free(next);
-    free(dict);
-    return out_pos;
+    free(dict_prefix); free(dict_char);
+    return p;
 }
 
 size_t lzw_decode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_len) {
-    if (src_len == 0) return 0;
+    if (src_len < 2) return 0;
 
-    size_t in_pos = 0;
-    size_t out_pos = 0;
-
-    dict_entry_t *dict = (dict_entry_t*)malloc(sizeof(dict_entry_t) * DICT_SIZE);
-    uint8_t *stack = (uint8_t*)malloc(DICT_SIZE);
-
+    lzw_node_t *dict = (lzw_node_t*)malloc(65536 * sizeof(lzw_node_t));
+    uint8_t *stack = (uint8_t*)malloc(65536);
     if (!dict || !stack) {
-        if (dict) free(dict);
-        if (stack) free(stack);
+        free(dict); free(stack);
         return 0;
     }
 
     for (int i = 0; i < 256; i++) {
         dict[i].prefix = -1;
-        dict[i].character = i;
+        dict[i].character = (uint8_t)i;
     }
-
     int next_code = 256;
-    if (in_pos + 2 > src_len) return 0;
-    int k = src[in_pos] | (src[in_pos + 1] << 8);
-    in_pos += 2;
 
-    if (k >= 256) return 0; // Invalid first code
+    size_t p_src = 0;
+    size_t p_dst = 0;
 
-    uint8_t w = (uint8_t)k;
-    if (out_pos < dst_len) dst[out_pos++] = w; else { free(dict); free(stack); return 0; }
+    uint16_t code = src[p_src] | (src[p_src+1] << 8);
+    p_src += 2;
+    uint16_t old_code = code;
 
-    int prev_k = k;
+    if (code >= 256) {
+        free(dict); free(stack);
+        return 0;
+    }
+    dst[p_dst++] = (uint8_t)code;
+    uint8_t k = (uint8_t)code;
 
-    while (in_pos + 2 <= src_len) {
-        k = src[in_pos] | (src[in_pos + 1] << 8);
-        in_pos += 2;
+    while (p_src + 1 < src_len) {
+        code = src[p_src] | (src[p_src+1] << 8);
+        p_src += 2;
 
-        int entry_code = k;
+        int temp_code = code;
         int stack_ptr = 0;
 
-        if (k < next_code) {
-            // Code in table
-        } else if (k == next_code) {
-            // Special case: k == next_code
-            stack[stack_ptr++] = w;
-            entry_code = prev_k;
+        if (temp_code < next_code) {
+            while (temp_code != -1) {
+                stack[stack_ptr++] = dict[temp_code].character;
+                temp_code = dict[temp_code].prefix;
+            }
         } else {
-            free(dict);
-            free(stack);
-            return 0; // Bad code
+            stack[stack_ptr++] = k;
+            temp_code = old_code;
+            while (temp_code != -1) {
+                stack[stack_ptr++] = dict[temp_code].character;
+                temp_code = dict[temp_code].prefix;
+            }
         }
 
-        while (entry_code >= 256) {
-            stack[stack_ptr++] = dict[entry_code].character;
-            entry_code = dict[entry_code].prefix;
-        }
-        uint8_t first = (uint8_t)entry_code;
-        stack[stack_ptr++] = first;
-
-        // Output stack in reverse
+        k = stack[stack_ptr - 1];
         while (stack_ptr > 0) {
-            if (out_pos < dst_len) {
-                dst[out_pos++] = stack[--stack_ptr];
-            } else {
-                free(dict);
-                free(stack);
+            if (p_dst < dst_len) dst[p_dst++] = stack[--stack_ptr];
+            else {
+                free(dict); free(stack);
                 return 0;
             }
         }
 
-        if (next_code < DICT_SIZE) {
-            dict[next_code].prefix = prev_k;
-            dict[next_code].character = first;
+        if (next_code < 65536) {
+            dict[next_code].prefix = old_code;
+            dict[next_code].character = k;
             next_code++;
         }
-        w = first;
-        prev_k = k;
+        old_code = code;
     }
 
-    free(dict);
-    free(stack);
-    return out_pos;
+    free(dict); free(stack);
+    return p_dst;
 }

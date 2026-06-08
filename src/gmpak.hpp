@@ -2,7 +2,7 @@
 #define GMPAK_HPP
 
 #include <stdint.h>
-#include <cstdio>
+#include <stdio.h>
 
 struct GMPakEntry {
     char name[17];
@@ -18,20 +18,15 @@ public:
     ~GMPak();
 
     bool is_open() const { return f != nullptr; }
-
-    // Returns pointer to data. If cached, returns cached data.
-    // If not cached, returns malloc'd buffer (caller must free).
-    // If preload is true, it will be cached.
-    void* get_entry(const char* name, uint32_t* out_size, uint8_t* out_type, bool preload = false);
-
-    void clear_cache();
+    void* get_entry(const char* name, uint32_t* size, uint8_t* type);
     void preload_entries(const char* prefix, int start, int end);
 
-    GMPakEntry* entries;
     uint32_t entry_count;
+    GMPakEntry* entries;
 
 private:
-    FILE *f;
+    FILE* f;
+    uint32_t last_index;
 };
 
-#endif // GMPAK_HPP
+#endif
